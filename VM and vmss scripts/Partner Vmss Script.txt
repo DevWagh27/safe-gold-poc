@@ -1,0 +1,125 @@
++=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+Partner VMSS Script
+
+#!/bin/bash
+
+###############################################
+# CONFIGURATION
+###############################################
+
+SUBSCRIPTION_ID="a9cafd12-1202-4c01-9841-5cf127a697fa"
+RESOURCE_GROUP="uat-uae-rg"
+VMSS_NAME="uat-partner-vmss"
+
+SSH_USER="uatpartner"
+SSH_PASSWORD="Partner@0405"
+
+###############################################
+# LOGIN USING MANAGED IDENTITY
+###############################################
+
+echo "Authenticating with Azure Managed Identity..."
+
+if ! az login --identity >/dev/null 2>&1
+then
+    echo
+    echo "ERROR: Managed Identity authentication failed."
+    exit 1
+fi
+
+###############################################
+# SELECT SUBSCRIPTION
+###############################################
+
+echo "Selecting Subscription..."
+
+if ! az account set --subscription "$SUBSCRIPTION_ID"
+then
+    echo
+    echo "ERROR: Unable to select subscription."
+    exit 1
+fi
+
+CURRENT_SUB=$(az account show --query name -o tsv)
+
+echo
+echo "Connected to:"
+echo "$CURRENT_SUB"
+echo
+
+###############################################
+# GET VM LIST
+###############################################
+
+echo "Fetching VMSS Instances..."
+
+mapfile -t IP_ARRAY < <(
+
+az vmss nic list \
+    --resource-group "$RESOURCE_GROUP" \
+    --vmss-name "$VMSS_NAME" \
+    --query "[].ipConfigurations[].privateIPAddress" \
+    -o tsv
+
+)
+
+if [ ${#IP_ARRAY[@]} -eq 0 ]
+then
+    echo
+    echo "No running VM found."
+    exit 1
+fi
+
+###############################################
+# MENU
+###############################################
+
+while true
+do
+
+    echo
+    echo "====================================="
+    echo " Available VMSS Instances"
+    echo "====================================="
+
+    for i in "${!IP_ARRAY[@]}"
+    do
+        echo "$((i+1))) ${IP_ARRAY[$i]}"
+    done
+
+    echo
+    echo "0) Exit"
+    echo
+
+    read -p "Select VM : " choice
+
+    if [ "$choice" = "0" ]
+    then
+        exit 0
+    fi
+
+    if ! [[ "$choice" =~ ^[0-9]+$ ]]
+    then
+        echo "Invalid Selection"
+        continue
+    fi
+
+    if [ "$choice" -lt 1 ] || [ "$choice" -gt "${#IP_ARRAY[@]}" ]
+    then
+        echo "Invalid Selection"
+        continue
+    fi
+
+    SELECTED_IP="${IP_ARRAY[$((choice-1))]}"
+
+    echo
+    echo "Connecting to $SELECTED_IP ..."
+    echo
+
+    sshpass -p "$SSH_PASSWORD" ssh \
+        -o StrictHostKeyChecking=no \
+        "$SSH_USER@$SELECTED_IP"
+
+    echo
+    echo "Disconnected."
+done
